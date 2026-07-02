@@ -1,74 +1,108 @@
 # macpower
 
-A single-file, zero-dependency Python CLI that reads live battery, charging,
-and power data on macOS — straight from the `AppleSmartBattery` service in the
-I/O Registry. No sudo, no installs, works on Apple Silicon and Intel.
+A zero-dependency Python sensor monitor for macOS. Reads live battery,
+charging, memory, and CPU data straight from the OS — no sudo, no installs,
+stock Python, works on Apple Silicon and Intel.
 
 ```
+battery
   State           discharging
-  Charge          41.0%
-  Battery power   -15.75 W from battery   (11.22 V x -1.404 A)
-  Time to empty   3:18
-  Battery temp    30.5 °C
+  Charge          40.0%
+  Battery power   -6.00 W from battery   (11.29 V x -0.532 A)
+  Time to empty   3:12
+  Battery temp    30.4 °C
   Cycles          115
-  Health          82.6%  (5016 of 6075 mAh design)
+  Health          82.5%  (5011 of 6075 mAh design)
+
+memory
+  Memory used     10.56 of 16.0 GB
+  Pressure        normal  (61% free system-wide)
+  Swap            2.77 of 4.0 GB used
+
+system
+  CPU             Apple M1 Pro  (8 cores)
+  Load avg        3.54  3.92  4.48
+  Uptime          8d 23.1h
 ```
 
 ## Usage
 
 ```bash
-python3 macpower.py            # one reading
-python3 macpower.py -w         # live view, refreshes every 2 s (Ctrl-C to quit)
-python3 macpower.py -w 0.5     # live view with a custom refresh interval
-python3 macpower.py --json     # derived values as JSON
-python3 macpower.py -w 5 --json >> power.jsonl   # NDJSON logging for charge-curve analysis
-python3 macpower.py --raw      # full raw ioreg property table (every key)
+python3 macpower.py                 # one reading, all sensors
+python3 macpower.py battery         # a single sensor
+python3 macpower.py --list          # what's available on this machine
+python3 macpower.py -w              # live view, refreshes every 2 s
+python3 macpower.py -w 0.5          # custom refresh interval
+python3 macpower.py --json          # derived values as JSON
+python3 macpower.py -w 5 --json >> power.jsonl    # NDJSON logging
+python3 macpower.py --raw battery   # full raw source data, every key
 ```
 
-## Reading the numbers
+## Sensors
+
+| Sensor    | Data | Source |
+|-----------|------|--------|
+| `battery` | charge %, true charge/discharge watts, adapter negotiation, temperature, cycles, health | `ioreg` AppleSmartBattery |
+| `memory`  | used/wired/compressed RAM, memory pressure, swap | `vm_stat`, `sysctl` |
+| `system`  | CPU model, load averages, uptime, thermal throttling | `sysctl`, `pmset -g therm` |
+
+## Show it in macOS
+
+**Menu bar** — install [SwiftBar](https://swiftbar.app) or
+[xbar](https://xbarapp.com), then drop this two-line wrapper into the plugin
+folder as `macpower.5s.sh` (the `5s` = refresh every 5 seconds):
+
+```bash
+#!/bin/zsh
+exec python3 /path/to/MacSensorTool/macpower.py --menubar
+```
+
+You get a live `🔋 40% -6.0W` in the menu bar with all sensors in the dropdown.
+
+**HTTP endpoints** — anything local (widgets, dashboards, Shortcuts,
+Raycast) can read the sensors as JSON:
+
+```bash
+python3 macpower.py --serve          # http://127.0.0.1:8137
+curl http://127.0.0.1:8137/sensors          # everything
+curl http://127.0.0.1:8137/sensors/battery  # one sensor
+curl http://127.0.0.1:8137/raw/battery      # raw source data
+```
+
+The server binds to 127.0.0.1 only. To keep it running in the background,
+load it as a LaunchAgent (`launchctl`) or just leave a terminal tab open.
+
+## Reading the battery numbers
 
 - **Battery power** is volts × amps measured at the battery itself.
-  Positive means charging, negative means discharging. This is the true
-  charge rate — usually less than the adapter's rated watts, because the
-  rest powers the machine, and charging tapers off near 100%.
-- **Adapter** shows what the charger negotiated over USB-PD (only shown
-  while plugged in).
-- **Health** is the battery's current full-charge capacity as a percentage
-  of its factory design capacity.
+  Positive = charging, negative = discharging. This true charge rate is
+  usually less than the adapter's rated watts — the rest powers the
+  machine, and charging tapers off near 100%.
+- **Health** is current full-charge capacity vs. factory design capacity.
 
-## How it works
+## Adding a sensor
 
-`ioreg -a -r -n AppleSmartBattery` emits an XML plist of the battery
-service's property table, which macOS updates continuously. The script
-parses it with `plistlib` and derives friendly values from it:
+Each sensor is one module in `macpower/sensors/` implementing a small
+contract (see `macpower/sensors/base.py`): `NAME`, `DESCRIPTION`,
+`available()`, `read()` → raw dict, `derive(raw)` → friendly dict,
+`render(derived)` → terminal text. Register it in
+`macpower/sensors/__init__.py` and it automatically shows up in the CLI,
+`--list`, the HTTP endpoints, and the menu bar dropdown.
 
-- `read_smart_battery()` fetches the raw property table,
-- `derive()` computes the derived values,
-- `render()` formats them for the terminal.
-
-`derive()` and `render()` are pure functions, so they can be unit-tested
-with mock dicts on any OS.
-
-Some ioreg quirks the script handles for you:
-
-- `Voltage` is mV and `Amperage` is mA; negative amperage means discharging.
-  ioreg sometimes encodes negative currents as unsigned 32/64-bit integers,
-  which `to_signed()` corrects.
-- `65535` is ioreg's sentinel for "unknown / still estimating" in the
-  time-remaining fields.
-- On Apple Silicon, `CurrentCapacity`/`MaxCapacity` are 0–100 percentages;
-  on Intel they are mAh. The ratio gives a correct percentage either way.
-- `Temperature` is hundredths of a degree Celsius.
-
-Verified against live `ioreg` output on an Apple Silicon MacBook.
+`derive()` and `render()` are pure functions — test them with mock dicts
+(see `tests.py`, runs on any OS: `python3 tests.py`).
 
 ## Requirements
 
-- macOS (any Mac with a battery)
+- macOS (battery sensor needs a Mac with a battery; the rest work anywhere)
 - Python 3 — the stock system Python works; standard library only
 
-## Ideas / roadmap
+## Roadmap
 
-- `sudo powermetrics` integration for CPU/GPU package power and thermal pressure
-- A charge-curve plotter fed by `--json` logs
-- A menu bar variant
+- `powermetrics` sensor (sudo): CPU/GPU package power, per-cluster
+  frequency, fan speed, real thermal pressure
+- Disk sensor: SMART status, free space, I/O rates
+- Network sensor: throughput per interface
+- Charge-curve plotter fed by `--json` logs
+- History ring buffer + `/history` endpoint for graphing dashboards
+- Native SwiftUI menu bar app reading the HTTP endpoint
