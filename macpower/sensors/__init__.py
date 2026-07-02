@@ -3,9 +3,9 @@ Sensor registry. To add a sensor, create a module implementing the contract
 in macpower.sensors.base and add it to the list below.
 """
 
-from macpower.sensors import battery, memory, system
+from macpower.sensors import battery, disk, memory, power, system
 
-ALL = [battery, memory, system]
+ALL = [battery, memory, system, disk, power]
 
 REGISTRY = {mod.NAME: mod for mod in ALL}
 

@@ -11,6 +11,7 @@ Sources (all no-sudo):
 import re
 import shutil
 
+from macpower import viz
 from macpower.sensors.base import ansi, sh
 
 NAME = "memory"
@@ -72,9 +73,14 @@ def derive(d: dict) -> dict:
     else:
         pressure = "critical"
 
+    total_gb = round(total_b / 1024**3, 1) if total_b else None
+    used_gb = gb(used)
+    used_pct = round(100 * used_gb / total_gb, 1) if total_gb else None
+
     return {
-        "total_gb": round(total_b / 1024**3, 1) if total_b else None,
-        "used_gb": gb(used),
+        "total_gb": total_gb,
+        "used_gb": used_gb,
+        "used_pct": used_pct,
         "wired_gb": gb(wired),
         "compressed_gb": gb(compressed),
         "free_pct": free_level,
@@ -95,7 +101,8 @@ def render(v: dict) -> str:
             rows.append(f"  {label:<16}{value}")
 
     if v["used_gb"] is not None and v["total_gb"]:
-        row("Memory used", f"{v['used_gb']} of {v['total_gb']} GB")
+        gauge = viz.colored_bar(v["used_pct"], invert=True)
+        row("Memory used", f"{gauge} {v['used_pct']}%  ({v['used_gb']} of {v['total_gb']} GB)")
     row("Wired", f"{v['wired_gb']} GB" if v["wired_gb"] else None)
     row("Compressed", f"{v['compressed_gb']} GB" if v["compressed_gb"] else None)
     if v["pressure"]:

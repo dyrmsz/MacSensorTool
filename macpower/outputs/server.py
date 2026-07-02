@@ -6,6 +6,8 @@ dashboards, Shortcuts -- can read the sensors as JSON.
     GET /sensors              derived values for every available sensor
     GET /sensors/<name>       derived values for one sensor
     GET /raw/<name>           raw property table for one sensor
+    GET /history/<name>       max/avg/now over 10m/30m/1h/2h/4h, per numeric
+                              field, from the --collect background log
 
 Binds to 127.0.0.1 only. CORS is open so local web dashboards can fetch it.
 """
@@ -14,13 +16,23 @@ import json
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from macpower import sensors
+from macpower import history, sensors
 
 
 def _snapshot(mods):
     return {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "sensors": {mod.NAME: mod.derive(mod.read()) for mod in mods},
+    }
+
+
+def _history(mod):
+    conn = history.connect()
+    latest = mod.derive(mod.read())
+    return {
+        key: history.window_stats(conn, mod.NAME, key)
+        for key, value in latest.items()
+        if isinstance(value, (int, float))
     }
 
 
@@ -43,14 +55,17 @@ class Handler(BaseHTTPRequestHandler):
                         mod.NAME: mod.DESCRIPTION
                         for mod in sensors.ALL if mod.available()
                     },
-                    "endpoints": ["/sensors", "/sensors/<name>", "/raw/<name>"],
+                    "endpoints": ["/sensors", "/sensors/<name>", "/raw/<name>", "/history/<name>"],
                 })
             elif parts == ["sensors"]:
                 self._send(_snapshot(sensors.get()))
-            elif parts[0] in ("sensors", "raw") and len(parts) == 2:
+            elif parts[0] in ("sensors", "raw", "history") and len(parts) == 2:
                 mod = sensors.REGISTRY.get(parts[1])
                 if mod is None or not mod.available():
                     self._send({"error": f"no such sensor: {parts[1]}"}, 404)
+                    return
+                if parts[0] == "history":
+                    self._send(_history(mod))
                     return
                 raw = mod.read()
                 self._send(raw if parts[0] == "raw" else mod.derive(raw))

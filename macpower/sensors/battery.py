@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 
+from macpower import viz
 from macpower.sensors.base import ansi
 
 NAME = "battery"
@@ -146,7 +147,8 @@ def render(v: dict) -> str:
         flow_txt = "0 W (idle)"
 
     row("State", ansi(v["state"], STATE_COLORS.get(v["state"], "0")))
-    row("Charge", f"{v['percent']}%" if v["percent"] is not None else None)
+    if v["percent"] is not None:
+        row("Charge", f"{viz.colored_bar(v['percent'])} {v['percent']}%")
     row("Battery power", f"{flow_txt}   ({v['volts']} V x {v['amps']} A)")
     if abs(v["instant_watts"] - flow) > 0.5:
         row("Instantaneous", f"{v['instant_watts']:+.2f} W")
@@ -169,7 +171,7 @@ def render(v: dict) -> str:
     if v["health_pct"]:
         row(
             "Health",
-            f"{v['health_pct']}%  "
+            f"{viz.colored_bar(v['health_pct'])} {v['health_pct']}%  "
             f"({v['max_capacity_mah']} of {v['design_mah']} mAh design)",
         )
     return "\n".join(rows)
